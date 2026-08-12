@@ -22,6 +22,66 @@ class TestCliSynthetic:
         resolved = yaml.safe_load((out_dir / "resolved-vars.yaml").read_text())
         assert resolved["key"] == "value"
 
+    def test_cwd_prepended_when_repo_dir_given(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        cwd_repo = tmp_path / "cwd-repo"
+        zuul_cwd = cwd_repo / "zuul.d"
+        zuul_cwd.mkdir(parents=True)
+        (zuul_cwd / "jobs.yaml").write_text(
+            "- job:\n    name: cwd-job\n    vars:\n      from_cwd: yes\n"
+        )
+        other_repo = tmp_path / "other-repo"
+        zuul_other = other_repo / "zuul.d"
+        zuul_other.mkdir(parents=True)
+        (zuul_other / "jobs.yaml").write_text(
+            "- job:\n    name: other-job\n    vars:\n      from_other: yes\n"
+        )
+        monkeypatch.chdir(cwd_repo)
+        rc = main(["--list-jobs", "--repo-dir", str(other_repo)])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "cwd-job" in out
+        assert "other-job" in out
+
+    def test_cwd_not_duplicated_when_already_in_repo_dir(
+        self, tmp_path, monkeypatch
+    ):
+        zuul_d = tmp_path / "zuul.d"
+        zuul_d.mkdir()
+        (zuul_d / "jobs.yaml").write_text(
+            "- job:\n    name: my-job\n    vars:\n      key: value\n"
+        )
+        monkeypatch.chdir(tmp_path)
+        out_dir = tmp_path / "output"
+        rc = main(
+            [
+                "my-job",
+                "--repo-dir",
+                str(tmp_path),
+                "--output-dir",
+                str(out_dir),
+            ]
+        )
+        assert rc == 0
+        resolved = yaml.safe_load((out_dir / "resolved-vars.yaml").read_text())
+        assert resolved["key"] == "value"
+
+    def test_cwd_not_duplicated_with_relative_path(
+        self, tmp_path, monkeypatch
+    ):
+        zuul_d = tmp_path / "zuul.d"
+        zuul_d.mkdir()
+        (zuul_d / "jobs.yaml").write_text(
+            "- job:\n    name: my-job\n    vars:\n      key: value\n"
+        )
+        monkeypatch.chdir(tmp_path)
+        out_dir = tmp_path / "output"
+        rc = main(["my-job", "--repo-dir", ".", "--output-dir", str(out_dir)])
+        assert rc == 0
+        resolved = yaml.safe_load((out_dir / "resolved-vars.yaml").read_text())
+        assert resolved["key"] == "value"
+
     def test_resolves_job_and_writes_file(self, tmp_path):
         zuul_d = tmp_path / "zuul.d"
         zuul_d.mkdir()

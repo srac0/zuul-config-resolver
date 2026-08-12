@@ -23,7 +23,11 @@ def _run(args):
         with open(args.config) as f:
             repo_dirs = yaml.safe_load(f)["repos"]
     else:
-        repo_dirs = args.repo_dir or [os.getcwd()]
+        repo_dirs = list(args.repo_dir) if args.repo_dir else []
+
+        cwd = os.path.realpath(os.getcwd())
+        if cwd not in [os.path.realpath(d) for d in repo_dirs]:
+            repo_dirs.insert(0, cwd)
 
     resolver = Resolver(repo_dirs)
 
@@ -88,8 +92,9 @@ def main(argv=None):
         "--repo-dir",
         action="append",
         help=(
-            "Path to a Zuul repo (default: cwd). "
-            "Pass multiple times to resolve jobs across repos "
+            "Path to an additional Zuul repo to scan. "
+            "cwd is always included automatically. "
+            "Pass multiple times for cross-repo resolution "
             "(e.g. --repo-dir ./zuul-jobs "
             "--repo-dir ./project-config)."
         ),
