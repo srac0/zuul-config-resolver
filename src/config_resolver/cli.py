@@ -10,15 +10,45 @@ from config_resolver import __version__
 from config_resolver.output import (
     list_jobs,
     show_conflicts,
+    show_diff,
     show_overrides,
     show_parents,
+    write_diff_vars,
     write_resolved_vars,
     write_sources,
 )
-from config_resolver.resolver import Resolver
+from config_resolver.resolver import Resolver, compute_diff
 
 
 def _run(args):
+    if args.diff:
+        if args.config:
+            print(
+                "error: --diff and --config cannot be used together",
+                file=sys.stderr,
+            )
+            return 2
+        repo_dirs_list = list(args.repo_dir) if args.repo_dir else []
+        if len(repo_dirs_list) > 1:
+            print(
+                "error: --diff supports a single --repo-dir",
+                file=sys.stderr,
+            )
+            return 2
+        if repo_dirs_list:
+            diff_repo = os.path.realpath(repo_dirs_list[0])
+        else:
+            diff_repo = os.path.realpath(os.getcwd())
+        diff_result = compute_diff(diff_repo, args.diff)
+
+        show_diff(diff_result)
+
+        os.makedirs(args.output_dir, exist_ok=True)
+        diff_path = os.path.join(args.output_dir, "resolved-vars-diff.yaml")
+        write_diff_vars(diff_result, diff_path)
+        print(f"Wrote {diff_path}")
+        return 0
+
     if args.config:
         with open(args.config) as f:
             repo_dirs = yaml.safe_load(f)["repos"]
@@ -97,6 +127,15 @@ def main(argv=None):
             "Pass multiple times for cross-repo resolution "
             "(e.g. --repo-dir ./zuul-jobs "
             "--repo-dir ./project-config)."
+        ),
+    )
+    parser.add_argument(
+        "--diff",
+        metavar="REF",
+        help=(
+            "Generate a diff report between the current working tree "
+            "and the specified branch or commit "
+            "(e.g. --diff main, --diff HEAD~1)."
         ),
     )
     parser.add_argument(

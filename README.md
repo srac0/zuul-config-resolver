@@ -97,6 +97,23 @@ See each parent job with its source file and variable counts:
 config-resolver --config repos.yaml --show-parents my-deploy-job
 ```
 
+### Diff against a branch
+
+Compare resolved variables between the current working tree and a branch or commit:
+
+```bash
+config-resolver --repo-dir ../my-zuul-repo --diff origin/main
+```
+
+Without `--repo-dir`, the current directory is used:
+
+```bash
+cd my-zuul-repo
+config-resolver --diff main
+```
+
+This prints a summary of added, removed, and changed jobs with their variable differences, and writes the full diff to `resolved-vars-diff.yaml`.
+
 ### List all jobs
 
 ```bash

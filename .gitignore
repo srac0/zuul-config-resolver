@@ -10,5 +10,6 @@ wheels/
 .venv
 
 # Generated files
-resolved-vars.yaml
+resolved-vars-diff.yaml
 resolved-vars-sources.yaml
+resolved-vars.yaml

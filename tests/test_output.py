@@ -4,8 +4,10 @@ import yaml
 
 from config_resolver.job_registry import JobDefinition
 from config_resolver.output import (
+    _simplify_path,
     _unique_values,
     format_conflicts,
+    format_diff,
     format_overrides,
     list_jobs,
     show_conflicts,
@@ -655,3 +657,106 @@ class TestShowConflicts:
         }
         show_conflicts(sources)
         assert capsys.readouterr().out == ""
+
+
+class TestFormatDiff:
+    def test_empty_diff(self):
+        lines = format_diff({})
+        assert lines == ["No variable changes detected."]
+
+    def test_added_job(self):
+        diff_result = {
+            "new-job": {"status": "added", "vars": {"a": 1, "b": 2}},
+        }
+        lines = format_diff(diff_result)
+        text = "\n".join(lines)
+        assert "Added jobs (1)" in text
+        assert "+ new-job" in text
+        assert "2 vars" in text
+
+    def test_removed_job(self):
+        diff_result = {
+            "old-job": {"status": "removed", "vars": {"x": 1}},
+        }
+        lines = format_diff(diff_result)
+        text = "\n".join(lines)
+        assert "Removed jobs (1)" in text
+        assert "- old-job" in text
+
+    def test_changed_job(self):
+        diff_result = {
+            "my-job": {
+                "status": "changed",
+                "diff": {
+                    "values_changed": {
+                        "root['key']": {
+                            "old_value": "old",
+                            "new_value": "new",
+                        }
+                    }
+                },
+            },
+        }
+        lines = format_diff(diff_result)
+        text = "\n".join(lines)
+        assert "Changed jobs (1)" in text
+        assert "~ my-job" in text
+        assert "was: old" in text
+        assert "now: new" in text
+
+    def test_mixed_statuses(self):
+        diff_result = {
+            "added-job": {"status": "added", "vars": {"a": 1}},
+            "removed-job": {"status": "removed", "vars": {"b": 2}},
+            "changed-job": {
+                "status": "changed",
+                "diff": {
+                    "dictionary_item_added": ["root['new_var']"],
+                },
+            },
+        }
+        lines = format_diff(diff_result)
+        text = "\n".join(lines)
+        assert "Added jobs (1)" in text
+        assert "Removed jobs (1)" in text
+        assert "Changed jobs (1)" in text
+
+    def test_dictionary_item_added(self):
+        diff_result = {
+            "my-job": {
+                "status": "changed",
+                "diff": {
+                    "dictionary_item_added": ["root['new_var']"],
+                },
+            },
+        }
+        lines = format_diff(diff_result)
+        text = "\n".join(lines)
+        assert "+ new_var" in text
+
+    def test_dictionary_item_removed(self):
+        diff_result = {
+            "my-job": {
+                "status": "changed",
+                "diff": {
+                    "dictionary_item_removed": ["root['old_var']"],
+                },
+            },
+        }
+        lines = format_diff(diff_result)
+        text = "\n".join(lines)
+        assert "- old_var" in text
+
+
+class TestSimplifyPath:
+    def test_simple_key(self):
+        assert _simplify_path("root['key']") == "key"
+
+    def test_nested_key(self):
+        assert _simplify_path("root['key']['sub']") == "key.sub"
+
+    def test_key_containing_root(self):
+        assert _simplify_path("root['rootdir']") == "rootdir"
+
+    def test_key_starting_with_root(self):
+        assert _simplify_path("root['root_path']") == "root_path"

@@ -1,7 +1,28 @@
+import subprocess
+
 import pytest
 import yaml
 
 from config_resolver.cli import main
+
+
+def _git(repo, *args):
+    subprocess.run(
+        ("git", *args),
+        cwd=str(repo),
+        capture_output=True,
+        check=True,
+    )
+
+
+def _init_repo(tmp_path):
+    repo = tmp_path / "repo"
+    zuul_d = repo / "zuul.d"
+    zuul_d.mkdir(parents=True)
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "test@test.com")
+    _git(repo, "config", "user.name", "Test")
+    return repo, zuul_d
 
 
 class TestCliSynthetic:
@@ -504,3 +525,61 @@ class TestCliSynthetic:
         assert rc == 0
         out = capsys.readouterr().out
         assert "cfg-job" in out
+
+    def test_diff_rejects_multiple_repo_dirs(self, capsys):
+        rc = main(
+            [
+                "--diff",
+                "HEAD",
+                "--repo-dir",
+                "/repo-a",
+                "--repo-dir",
+                "/repo-b",
+            ]
+        )
+        assert rc == 2
+        err = capsys.readouterr().err
+        assert "--diff supports a single --repo-dir" in err
+
+    def test_diff_rejects_config(self, capsys):
+        rc = main(
+            [
+                "--diff",
+                "HEAD",
+                "--config",
+                "repos.yaml",
+            ]
+        )
+        assert rc == 2
+        err = capsys.readouterr().err
+        assert "--diff and --config cannot be used together" in err
+
+    def test_diff_writes_output(self, tmp_path, capsys):
+        repo, zuul_d = _init_repo(tmp_path)
+        (zuul_d / "jobs.yaml").write_text(
+            "- job:\n    name: my-job\n    vars:\n      key: old\n"
+        )
+        _git(repo, "add", ".")
+        _git(repo, "commit", "-m", "initial")
+        (zuul_d / "jobs.yaml").write_text(
+            "- job:\n    name: my-job\n    vars:\n      key: new\n"
+        )
+        out_dir = tmp_path / "output"
+        rc = main(
+            [
+                "--diff",
+                "HEAD",
+                "--repo-dir",
+                str(repo),
+                "--output-dir",
+                str(out_dir),
+            ]
+        )
+        assert rc == 0
+        diff_file = out_dir / "resolved-vars-diff.yaml"
+        assert diff_file.exists()
+        diff_data = yaml.safe_load(diff_file.read_text())
+        assert "my-job" in diff_data
+        assert diff_data["my-job"]["status"] == "changed"
+        out = capsys.readouterr().out
+        assert "~ my-job" in out

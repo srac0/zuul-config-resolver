@@ -1,6 +1,8 @@
+import subprocess
+
 import pytest
 
-from config_resolver.resolver import Resolver
+from config_resolver.resolver import Resolver, compute_diff
 
 
 class TestResolverSynthetic:
@@ -222,3 +224,134 @@ class TestResolverMultiRepo:
     def test_rejects_string_repo_dir(self):
         with pytest.raises(TypeError, match="must be a list"):
             Resolver("/some/path")
+
+
+def _git(repo, *args):
+    subprocess.run(
+        ("git", *args),
+        cwd=str(repo),
+        capture_output=True,
+        check=True,
+    )
+
+
+def _init_repo(tmp_path):
+    repo = tmp_path / "repo"
+    zuul_d = repo / "zuul.d"
+    zuul_d.mkdir(parents=True)
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "test@test.com")
+    _git(repo, "config", "user.name", "Test")
+    return repo, zuul_d
+
+
+class TestComputeDiff:
+    def test_changed_var_detected(self, tmp_path):
+        repo, zuul_d = _init_repo(tmp_path)
+        (zuul_d / "jobs.yaml").write_text(
+            "- job:\n    name: my-job\n    vars:\n      key: old\n"
+        )
+        _git(repo, "add", ".")
+        _git(repo, "commit", "-m", "initial")
+        (zuul_d / "jobs.yaml").write_text(
+            "- job:\n    name: my-job\n    vars:\n      key: new\n"
+        )
+        result = compute_diff(str(repo), "HEAD")
+        assert "my-job" in result
+        assert result["my-job"]["status"] == "changed"
+        diff = result["my-job"]["diff"]
+        assert "values_changed" in diff
+
+    def test_added_job_detected(self, tmp_path):
+        repo, zuul_d = _init_repo(tmp_path)
+        (zuul_d / "jobs.yaml").write_text(
+            "- job:\n    name: original\n    vars:\n      a: 1\n"
+        )
+        _git(repo, "add", ".")
+        _git(repo, "commit", "-m", "initial")
+        (zuul_d / "jobs.yaml").write_text(
+            "- job:\n    name: original\n    vars:\n      a: 1\n"
+            "- job:\n    name: new-job\n    vars:\n      b: 2\n"
+        )
+        result = compute_diff(str(repo), "HEAD")
+        assert "new-job" in result
+        assert result["new-job"]["status"] == "added"
+        assert result["new-job"]["vars"]["b"] == 2
+        assert "original" not in result
+
+    def test_removed_job_detected(self, tmp_path):
+        repo, zuul_d = _init_repo(tmp_path)
+        (zuul_d / "jobs.yaml").write_text(
+            "- job:\n    name: kept\n    vars:\n      a: 1\n"
+            "- job:\n    name: doomed\n    vars:\n      b: 2\n"
+        )
+        _git(repo, "add", ".")
+        _git(repo, "commit", "-m", "initial")
+        (zuul_d / "jobs.yaml").write_text(
+            "- job:\n    name: kept\n    vars:\n      a: 1\n"
+        )
+        result = compute_diff(str(repo), "HEAD")
+        assert "doomed" in result
+        assert result["doomed"]["status"] == "removed"
+        assert "kept" not in result
+
+    def test_no_changes_returns_empty(self, tmp_path):
+        repo, zuul_d = _init_repo(tmp_path)
+        (zuul_d / "jobs.yaml").write_text(
+            "- job:\n    name: stable\n    vars:\n      a: 1\n"
+        )
+        _git(repo, "add", ".")
+        _git(repo, "commit", "-m", "initial")
+        result = compute_diff(str(repo), "HEAD")
+        assert result == {}
+
+    def test_resolved_vars_diffed_not_raw(self, tmp_path):
+        repo, zuul_d = _init_repo(tmp_path)
+        (zuul_d / "jobs.yaml").write_text(
+            "- job:\n"
+            "    name: parent\n"
+            "    vars:\n"
+            "      from_parent: old\n"
+            "- job:\n"
+            "    name: child\n"
+            "    parent: parent\n"
+            "    vars:\n"
+            "      own: 1\n"
+        )
+        _git(repo, "add", ".")
+        _git(repo, "commit", "-m", "initial")
+        (zuul_d / "jobs.yaml").write_text(
+            "- job:\n"
+            "    name: parent\n"
+            "    vars:\n"
+            "      from_parent: new\n"
+            "- job:\n"
+            "    name: child\n"
+            "    parent: parent\n"
+            "    vars:\n"
+            "      own: 1\n"
+        )
+        result = compute_diff(str(repo), "HEAD")
+        assert "child" in result
+        assert result["child"]["status"] == "changed"
+
+    def test_include_vars_resolved_in_diff(self, tmp_path):
+        repo, zuul_d = _init_repo(tmp_path)
+        vars_dir = repo / "vars"
+        vars_dir.mkdir()
+        (vars_dir / "defaults.yaml").write_text("inc_key: old_val\n")
+        (zuul_d / "jobs.yaml").write_text(
+            "- job:\n"
+            "    name: my-job\n"
+            "    include-vars:\n"
+            "      - name: vars/defaults.yaml\n"
+            "    vars:\n"
+            "      own: 1\n"
+        )
+        _git(repo, "add", ".")
+        _git(repo, "commit", "-m", "initial")
+        (vars_dir / "defaults.yaml").write_text("inc_key: new_val\n")
+        result = compute_diff(str(repo), "HEAD")
+        assert "my-job" in result
+        assert result["my-job"]["status"] == "changed"
+        assert "values_changed" in result["my-job"]["diff"]
