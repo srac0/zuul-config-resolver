@@ -17,6 +17,6 @@ repos:
   # Run the formatter.
   - id: ruff-format
 - repo: https://github.com/astral-sh/uv-pre-commit
-  rev: 0.11.31
+  rev: 0.13.3
   hooks:
   - id: uv-lock
